@@ -9,12 +9,11 @@ extern crate itertools;
 use itertools::*;
 
 const K: u8 = 64;
-type Int = u64;
 
-struct CaseSet<'a>(Vec<Int>, Vec<&'a str>);
+pub struct CaseSet<'a>(Vec<u64>, Vec<&'a str>);
 
-impl<'a> From<Vec<(Int, &'a str)>> for CaseSet<'a> {
-    fn from(mut v: Vec<(Int, &'a str)>) -> Self {
+impl<'a> From<Vec<(u64, &'a str)>> for CaseSet<'a> {
+    fn from(mut v: Vec<(u64, &'a str)>) -> Self {
         v.sort_by_key(|kv| kv.0);
         v.dedup();
         let (cases, labels) = v.into_iter().unzip();
@@ -22,12 +21,12 @@ impl<'a> From<Vec<(Int, &'a str)>> for CaseSet<'a> {
     }
 }
 
-enum Marker<'a> {
-    Case(Int, &'a str),
+pub enum Marker<'a> {
+    Case(u64, &'a str),
     Default,
 }
 
-enum Tree<'a> {
+pub enum Tree<'a> {
     Node {
         id: usize,
         children: Vec<Tree<'a>>,
@@ -59,18 +58,18 @@ fn new_label() -> usize {
 }
 
 #[derive(Copy, Clone)]
-struct Window {
-    l: u8,
-    r: u8,
+pub struct Window {
+    pub l: u8,
+    pub r: u8,
 }
 
-fn val(s: Int, w: Window) -> Int {
+fn val(s: u64, w: Window) -> u64 {
     let width = 1 + w.l - w.r;
     let mask = (1 << width) - 1;
     (s >> w.r) & mask
 }
 
-fn is_critical(w: Window, c: &[Int]) -> bool {
+fn is_critical(w: Window, c: &[u64]) -> bool {
     let thresh = 1 << (w.l - w.r);
     let mut set = c.into_iter().map(|&s| val(s, w)).collect_vec();
     set.sort();
@@ -79,8 +78,8 @@ fn is_critical(w: Window, c: &[Int]) -> bool {
     set.len() > thresh
 }
 
-fn mapped_cardinality<F>(c: &[Int], f: F) -> usize
-    where F: Fn(Int) -> Int
+fn mapped_cardinality<F>(c: &[u64], f: F) -> usize
+    where F: Fn(u64) -> u64
 {
     let mut set = c.into_iter().map(|&s| f(s)).collect_vec();
     set.sort();
@@ -88,7 +87,7 @@ fn mapped_cardinality<F>(c: &[Int], f: F) -> usize
     set.len()
 }
 
-fn critical_window(c: &[Int]) -> Window {
+fn critical_window(c: &[u64]) -> Window {
     let mut w = Window {
         l: K - 1,
         r: K - 1,
@@ -110,7 +109,7 @@ fn critical_window(c: &[Int]) -> Window {
     w_max
 }
 
-fn mrst<'a, I: Into<CaseSet<'a>>>(p: I) -> Tree<'a> {
+pub fn mrst<'a, I: Into<CaseSet<'a>>>(p: I) -> Tree<'a> {
     let p = p.into();
     let (cases, labels) = (p.0, p.1);
 
@@ -127,7 +126,7 @@ fn mrst<'a, I: Into<CaseSet<'a>>>(p: I) -> Tree<'a> {
         let (cases, labels) = cases.iter()
                                    .cloned()
                                    .zip(labels.iter().cloned())
-                                   .filter(|&(i, _)| val(i, w_max) == j as Int)
+                                   .filter(|&(i, _)| val(i, w_max) == j as u64)
                                    .unzip();
 
         let pj = CaseSet(cases, labels);
