@@ -1,0 +1,7 @@
+[package]
+name = "mrst"
+version = "0.1.0"
+authors = ["BurntPizza <xburntpizza@gmail.com>"]
+
+[dependencies]
+itertools = "0.4"
