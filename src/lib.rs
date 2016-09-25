@@ -6,13 +6,22 @@
 // https://drhanson.s3.amazonaws.com/storage/documents/mrst.pdf
 
 extern crate itertools;
-
-use std::collections::HashSet;
+use itertools::*;
 
 const K: u8 = 64;
 type Int = u64;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+struct CaseSet<'a>(Vec<Int>, Vec<&'a str>);
+
+impl<'a> From<Vec<(Int, &'a str)>> for CaseSet<'a> {
+    fn from(mut v: Vec<(Int, &'a str)>) -> Self {
+        v.sort_by_key(|kv| kv.0);
+        v.dedup();
+        let (cases, labels) = v.into_iter().unzip();
+        CaseSet(cases, labels)
+    }
+}
+
 enum Marker<'a> {
     Case(Int, &'a str),
     Default,
@@ -63,7 +72,9 @@ fn val(s: Int, w: Window) -> Int {
 
 fn is_critical(w: Window, c: &[Int]) -> bool {
     let thresh = 1 << (w.l - w.r);
-    let set: HashSet<_> = c.into_iter().map(|&s| val(s, w)).collect();
+    let mut set = c.into_iter().map(|&s| val(s, w)).collect_vec();
+    set.sort();
+    set.dedup();
 
     set.len() > thresh
 }
@@ -71,7 +82,10 @@ fn is_critical(w: Window, c: &[Int]) -> bool {
 fn mapped_cardinality<F>(c: &[Int], f: F) -> usize
     where F: Fn(Int) -> Int
 {
-    c.into_iter().map(|&s| f(s)).collect::<HashSet<_>>().len()
+    let mut set = c.into_iter().map(|&s| f(s)).collect::<Vec<_>>();
+    set.sort();
+    set.dedup();
+    set.len()
 }
 
 fn critical_window(c: &[Int]) -> Window {
@@ -96,26 +110,29 @@ fn critical_window(c: &[Int]) -> Window {
     w_max
 }
 
-fn mrst(p: HashSet<(Int, &str)>) -> Tree {
-    if p.len() == 1 {
-        let (case, label) = p.into_iter().next().unwrap();
-        return Tree::leaf(Marker::Case(case, label));
+fn mrst<'a, I: Into<CaseSet<'a>>>(p: I) -> Tree<'a> {
+    let p = p.into();
+    let (cases, labels) = (p.0, p.1);
+
+    if cases.len() == 1 {
+        return Tree::leaf(Marker::Case(cases[0], labels[0]));
     }
 
-
-
-    let cases = p.iter().map(|&(i, _)| i).collect::<Vec<_>>();
     let w_max = critical_window(&*cases);
-    let n = w_max.l - w_max.r + 1;
-    let nj = 1 << n;
-    let mut children = Vec::with_capacity(nj);
+    let n = 1 + w_max.l - w_max.r;
+    let size = 1 << n;
+    let mut children = Vec::with_capacity(size);
 
-    for j in 0..nj {
-        let pj: HashSet<_> = p.iter()
-                              .cloned()
-                              .filter(|&(i, _)| val(i, w_max) as usize == j)
-                              .collect();
-        if pj.is_empty() {
+    for j in 0..size {
+        let (cases, labels) = cases.iter()
+                                   .cloned()
+                                   .zip(labels.iter().cloned())
+                                   .filter(|&(i, _)| val(i, w_max) == j as Int)
+                                   .unzip();
+
+        let pj = CaseSet(cases, labels);
+
+        if pj.0.is_empty() {
             children.push(Tree::leaf(Marker::Default));
         } else {
             children.push(mrst(pj));
@@ -129,6 +146,9 @@ fn mrst(p: HashSet<(Int, &str)>) -> Tree {
 mod tests {
     use itertools::*;
 
+    use std::io::prelude::*;
+    use std::fs::File;
+
     use super::{Marker, Tree, Window, val, mrst};
 
     #[test]
@@ -138,8 +158,6 @@ mod tests {
 
     #[test]
     fn it_works() {
-        use std::io::prelude::*;
-        use std::fs::File;
 
         let set = vec![
             (8, "function 1"),
@@ -157,9 +175,7 @@ mod tests {
 
             (2048, "function 4"),
             (2082, "function 4"),
-        ]
-                      .into_iter()
-                      .collect();
+        ];
 
         let tree = mrst(set);
 
@@ -179,11 +195,6 @@ mod tests {
         fn helper(tree: &Tree) -> String {
             match *tree {
                 Tree::Node { ref children, w, .. } => {
-                    let edges = children.iter()
-                                        .map(|c| {
-                                            format!("{} -> {}\n{}", id(tree), id(c), helper(c))
-                                        })
-                                        .join("\n");
                     format!("{} [ label = \"{}\" ]\n{}",
                             id(tree),
                             if w.l == w.r {
@@ -191,7 +202,9 @@ mod tests {
                             } else {
                                 format!("bits {} to {}", w.l, w.r)
                             },
-                            edges)
+                            children.iter()
+                                    .map(|c| format!("{} -> {}\n{}", id(tree), id(c), helper(c)))
+                                    .join("\n"))
                 }
                 Tree::Leaf(_, ref m) => {
                     format!("{} [ label = \"{}\" ]",
