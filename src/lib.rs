@@ -13,22 +13,22 @@ const K: u8 = 64;
 type Int = u64;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
-enum Marker {
-    Case(Int, String),
+enum Marker<'a> {
+    Case(Int, &'a str),
     Default,
 }
 
-enum Tree {
+enum Tree<'a> {
     Node {
         l: usize,
-        children: Vec<Tree>,
+        children: Vec<Tree<'a>>,
         w: Window,
     },
-    Leaf(usize, Marker),
+    Leaf(usize, Marker<'a>),
 }
 
-impl Tree {
-    fn new(children: Vec<Tree>, w: Window) -> Self {
+impl<'a> Tree<'a> {
+    fn new(children: Vec<Tree<'a>>, w: Window) -> Self {
         Tree::Node {
             l: new_label(),
             children: children,
@@ -36,7 +36,7 @@ impl Tree {
         }
     }
 
-    fn leaf(m: Marker) -> Self {
+    fn leaf(m: Marker<'a>) -> Self {
         Tree::Leaf(new_label(), m)
     }
 }
@@ -96,22 +96,25 @@ fn critical_window(c: &[Int]) -> Window {
     w_max
 }
 
-fn mrst(p: HashSet<(Int, Marker)>) -> Tree {
+fn mrst(p: HashSet<(Int, &str)>) -> Tree {
     if p.len() == 1 {
-        return Tree::leaf(p.into_iter().next().unwrap().1);
+        let (case, label) = p.into_iter().next().unwrap();
+        return Tree::leaf(Marker::Case(case, label));
     }
 
-    let c = p.iter().map(|p| p.0).collect::<Vec<_>>();
-    let w_max = critical_window(&*c);
+    
+
+    let cases = p.iter().map(|&(i, _)| i).collect::<Vec<_>>();
+    let w_max = critical_window(&*cases);
     let n = w_max.l - w_max.r + 1;
     let nj = 1 << n;
     let mut children = Vec::with_capacity(nj);
 
     for j in 0..nj {
         let pj: HashSet<_> = p.iter()
-                              .cloned()
-                              .filter(|&(c, _)| val(c, w_max) as usize == j)
-                              .collect();
+            .cloned()
+            .filter(|&(i, _)| val(i, w_max) as usize == j)
+            .collect();
         if pj.is_empty() {
             children.push(Tree::leaf(Marker::Default));
         } else {
@@ -126,7 +129,7 @@ fn mrst(p: HashSet<(Int, Marker)>) -> Tree {
 mod tests {
     use itertools::*;
 
-    use super::{Int, Marker, Tree, Window, val, mrst};
+    use super::{Marker, Tree, Window, val, mrst};
 
     #[test]
     fn test_val() {
@@ -139,21 +142,21 @@ mod tests {
         use std::fs::File;
 
         let set = vec![
-            case(8, "function 1"),
-            case(16, "function 1"),
-            case(33, "function 1"),
-            case(37, "function 1"),
-            case(41, "function 1"),
-            case(60, "function 1"),
+            (8, "function 1"),
+            (16, "function 1"),
+            (33, "function 1"),
+            (37, "function 1"),
+            (41, "function 1"),
+            (60, "function 1"),
 
-            case(144, "function 2"),
-            case(264, "function 2"),
-            case(291, "function 2"),
+            (144, "function 2"),
+            (264, "function 2"),
+            (291, "function 2"),
 
-            case(1032, "function 3"),
+            (1032, "function 3"),
 
-            case(2048, "function 4"),
-            case(2082, "function 4"),
+            (2048, "function 4"),
+            (2082, "function 4"),
         ]
                       .into_iter()
                       .collect();
@@ -162,10 +165,6 @@ mod tests {
 
         let mut f = File::create("test_graph.graphviz").unwrap();
         f.write_all(debug_print_tree(&tree).as_bytes()).unwrap();
-    }
-
-    fn case(i: Int, label: &str) -> (Int, Marker) {
-        (i, Marker::Case(i, label.to_owned()))
     }
 
     fn debug_print_tree(tree: &Tree) -> String {
