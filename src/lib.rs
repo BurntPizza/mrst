@@ -82,7 +82,7 @@ fn is_critical(w: Window, c: &[Int]) -> bool {
 fn mapped_cardinality<F>(c: &[Int], f: F) -> usize
     where F: Fn(Int) -> Int
 {
-    let mut set = c.into_iter().map(|&s| f(s)).collect::<Vec<_>>();
+    let mut set = c.into_iter().map(|&s| f(s)).collect_vec();
     set.sort();
     set.dedup();
     set.len()
