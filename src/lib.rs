@@ -12,7 +12,7 @@ use std::collections::HashSet;
 const K: u8 = 64;
 type Int = u64;
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Marker<'a> {
     Case(Int, &'a str),
     Default,
@@ -20,7 +20,7 @@ enum Marker<'a> {
 
 enum Tree<'a> {
     Node {
-        l: usize,
+        id: usize,
         children: Vec<Tree<'a>>,
         w: Window,
     },
@@ -30,7 +30,7 @@ enum Tree<'a> {
 impl<'a> Tree<'a> {
     fn new(children: Vec<Tree<'a>>, w: Window) -> Self {
         Tree::Node {
-            l: new_label(),
+            id: new_label(),
             children: children,
             w: w,
         }
@@ -102,7 +102,7 @@ fn mrst(p: HashSet<(Int, &str)>) -> Tree {
         return Tree::leaf(Marker::Case(case, label));
     }
 
-    
+
 
     let cases = p.iter().map(|&(i, _)| i).collect::<Vec<_>>();
     let w_max = critical_window(&*cases);
@@ -112,9 +112,9 @@ fn mrst(p: HashSet<(Int, &str)>) -> Tree {
 
     for j in 0..nj {
         let pj: HashSet<_> = p.iter()
-            .cloned()
-            .filter(|&(i, _)| val(i, w_max) as usize == j)
-            .collect();
+                              .cloned()
+                              .filter(|&(i, _)| val(i, w_max) as usize == j)
+                              .collect();
         if pj.is_empty() {
             children.push(Tree::leaf(Marker::Default));
         } else {
@@ -171,14 +171,14 @@ mod tests {
         fn id(tree: &Tree) -> String {
             match *tree {
                 Tree::Leaf(id, _) => format!("N{}", id),
-                Tree::Node { l, .. } => format!("N{}", l),
+                Tree::Node { id, .. } => format!("N{}", id),
             }
         }
 
         #[allow(unused_variables)]
         fn helper(tree: &Tree) -> String {
             match *tree {
-                Tree::Node { l, ref children, w } => {
+                Tree::Node { ref children, w, .. } => {
                     let edges = children.iter()
                                         .map(|c| {
                                             format!("{} -> {}\n{}", id(tree), id(c), helper(c))
