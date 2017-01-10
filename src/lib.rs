@@ -21,16 +21,33 @@ impl<'a> From<Vec<(u64, &'a str)>> for CaseSet<'a> {
     }
 }
 
+trait HashFn {
+    fn hash(&self, input: u64) -> u64;
+}
+
+pub enum Hasher {
+    ShiftMask(Window),
+}
+
+impl HashFn for Hasher {
+    fn hash(&self, input: u64) -> u64 {
+        match *self {
+            Hasher::ShiftMask(w) => val(input, w),
+        }
+    }
+}
+
 pub enum Marker<'a> {
     Case(u64, &'a str),
     Default,
 }
 
 pub enum Tree<'a> {
+//    B,
     Node {
         id: usize,
         children: Vec<Tree<'a>>,
-        w: Window,
+        hasher: Hasher,
     },
     Leaf(usize, Marker<'a>),
 }
@@ -40,7 +57,7 @@ impl<'a> Tree<'a> {
         Tree::Node {
             id: new_label(),
             children: children,
-            w: w,
+            hasher: Hasher::ShiftMask(w),
         }
     }
 
@@ -71,13 +88,12 @@ fn val(s: u64, w: Window) -> u64 {
 
 fn is_critical(w: Window, c: &[u64]) -> bool {
     let thresh = 1 << (w.l - w.r);
-    let mut set = c.into_iter().map(|&s| val(s, w)).collect_vec();
-    set.sort();
-    set.dedup();
+    let cardinality = mapped_cardinality(c, |s| val(s, w));
 
-    set.len() > thresh
+    cardinality > thresh
 }
 
+// the 'score' of the hash fn on dataset 'c'
 fn mapped_cardinality<F>(c: &[u64], f: F) -> usize
     where F: Fn(u64) -> u64
 {
@@ -108,6 +124,12 @@ fn critical_window(c: &[u64]) -> Window {
 
     w_max
 }
+
+// TODO: look for hash functions with few collisions
+// use additional node types for this: e.g. "Node" -> "ShiftMask" or something
+// and then "SubLow", "Log2", and "JumpTable"
+//
+//
 
 pub fn mrst<'a, I: Into<CaseSet<'a>>>(p: I) -> Tree<'a> {
     let p = p.into();
@@ -148,7 +170,7 @@ mod tests {
     use std::io::prelude::*;
     use std::fs::File;
 
-    use super::{Marker, Tree, Window, val, mrst};
+    use super::{Hasher, Marker, Tree, Window, val, mrst};
 
     #[test]
     fn test_val() {
@@ -157,8 +179,15 @@ mod tests {
 
     #[test]
     fn it_works() {
-
         let set = vec![
+            // (2, "f1"),
+            // (4, "f2"),
+            // (8, "f3"),
+            // (16, "f4"),
+            // (32, "f5"),
+            // (64, "f6"),
+            // (128, "f7"),
+            // (256, "f8"),
             (8, "function 1"),
             (16, "function 1"),
             (33, "function 1"),
@@ -193,13 +222,18 @@ mod tests {
         #[allow(unused_variables)]
         fn helper(tree: &Tree) -> String {
             match *tree {
-                Tree::Node { ref children, w, .. } => {
+                Tree::Node { ref children, ref hasher, .. } => {
                     format!("{} [ label = \"{}\" ]\n{}",
                             id(tree),
-                            if w.l == w.r {
-                                format!("bit {}", w.l)
-                            } else {
-                                format!("bits {} to {}", w.l, w.r)
+                            match *hasher {
+                                Hasher::ShiftMask(w) => {
+                                    //format!("shr {}\nand {}", w.r, 1 + w.l - w.r)
+                                    if w.l == w.r {
+                                        format!("bit {}", w.l)
+                                    } else {
+                                        format!("bits {} to {}", w.l, w.r)
+                                    }
+                                }
                             },
                             children.iter()
                                     .map(|c| format!("{} -> {}\n{}", id(tree), id(c), helper(c)))
