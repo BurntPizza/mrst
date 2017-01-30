@@ -2,76 +2,55 @@
 // TODO: NOT READY FOR PUBLISHING AT ALL
 
 
-// From "Efficient Multiway Radix Search Trees"
-// https://drhanson.s3.amazonaws.com/storage/documents/mrst.pdf
 
-extern crate itertools;
-use itertools::*;
+use std::fmt::{self, Debug, Formatter};
 
+#[cfg(target_pointer_width = "64")]
 const K: u8 = 64;
 
-pub struct CaseSet<'a>(Vec<u64>, Vec<&'a str>);
+#[cfg(target_pointer_width = "32")]
+const K: u8 = 32;
 
-impl<'a> From<Vec<(u64, &'a str)>> for CaseSet<'a> {
-    fn from(mut v: Vec<(u64, &'a str)>) -> Self {
-        v.sort_by_key(|kv| kv.0);
-        v.dedup();
-        let (cases, labels) = v.into_iter().unzip();
-        CaseSet(cases, labels)
-    }
+pub trait HashFn: Debug {
+    fn hash(&self, input: usize) -> usize;
+    fn size(&self) -> usize;
 }
 
-trait HashFn {
-    fn hash(&self, input: u64) -> u64;
+pub trait HashMethod {
+    fn new(&self, case_set: &[usize]) -> Box<HashFn>;
 }
 
-pub enum Hasher {
-    ShiftMask(Window),
-}
-
-impl HashFn for Hasher {
-    fn hash(&self, input: u64) -> u64 {
-        match *self {
-            Hasher::ShiftMask(w) => val(input, w),
-        }
-    }
-}
-
-pub enum Marker<'a> {
-    Case(u64, &'a str),
+pub enum Marker<T> {
+    Case(usize, T),
     Default,
 }
 
-pub enum Tree<'a> {
-//    B,
-    Node {
-        id: usize,
-        children: Vec<Tree<'a>>,
-        hasher: Hasher,
+pub enum Tree<T> {
+    Branch {
+        children: Vec<Tree<T>>,
+        hash_fn: Box<HashFn>,
     },
-    Leaf(usize, Marker<'a>),
+    Leaf(Marker<T>),
 }
 
-impl<'a> Tree<'a> {
-    fn new(children: Vec<Tree<'a>>, w: Window) -> Self {
-        Tree::Node {
-            id: new_label(),
+impl<T> Tree<T> {
+    fn branch(children: Vec<Tree<T>>, hash_fn: Box<HashFn>) -> Self {
+        Tree::Branch {
             children: children,
-            hasher: Hasher::ShiftMask(w),
+            hash_fn: hash_fn,
         }
     }
-
-    fn leaf(m: Marker<'a>) -> Self {
-        Tree::Leaf(new_label(), m)
-    }
 }
 
-fn new_label() -> usize {
-    use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
-    static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+/// From "Efficient Multiway Radix Search Trees"
+/// https://drhanson.s3.amazonaws.com/storage/documents/mrst.pdf
+pub struct ShiftMask;
 
-    COUNTER.fetch_add(1, Ordering::SeqCst)
+impl HashMethod for ShiftMask {
+    fn new(&self, case_set: &[usize]) -> Box<HashFn> {
+        Box::new(Window::critical_window(case_set))
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -80,49 +59,101 @@ pub struct Window {
     pub r: u8,
 }
 
-fn val(s: u64, w: Window) -> u64 {
-    let width = 1 + w.l - w.r;
-    let mask = (1 << width) - 1;
-    (s >> w.r) & mask
+impl Window {
+    pub fn is_critical(&self, cases: &[usize]) -> bool {
+        let thresh = 1 << (self.l - self.r);
+        let cardinality = mapped_cardinality(cases, |v| self.hash(v));
+
+        cardinality > thresh
+    }
+
+    /// Find the longest critical window, and the most critical window of that length.
+    pub fn critical_window(cases: &[usize]) -> Window {
+        let mut w = Window {
+            l: K - 1,
+            r: K - 1,
+        };
+        let mut w_max = w;
+
+        for b in (0..K).rev() {
+            w.r = b;
+            if w.is_critical(cases) {
+                w_max = w;
+            } else {
+                w.l -= 1;
+                if mapped_cardinality(cases, |v| w.hash(v)) >
+                   mapped_cardinality(cases, |v| w_max.hash(v)) {
+                    w_max = w;
+                }
+            }
+        }
+
+        w_max
+    }
 }
 
-fn is_critical(w: Window, c: &[u64]) -> bool {
-    let thresh = 1 << (w.l - w.r);
-    let cardinality = mapped_cardinality(c, |s| val(s, w));
+impl HashFn for Window {
+    fn hash(&self, input: usize) -> usize {
+        let width = 1 + self.l - self.r;
+        let mask = (1 << width) - 1;
+        (input >> self.r) & mask
+    }
 
-    cardinality > thresh
+    fn size(&self) -> usize {
+        1 << (1 + (self.l - self.r) as usize)
+    }
 }
 
-// the 'score' of the hash fn on dataset 'c'
-fn mapped_cardinality<F>(c: &[u64], f: F) -> usize
-    where F: Fn(u64) -> u64
+impl Debug for Window {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        // format!("shr {}\nand {}", w.r, 1 + w.l - w.r)
+        if self.l == self.r {
+            write!(f, "bit {}", self.l)
+        } else {
+            write!(f, "bits {} to {}", self.l, self.r)
+        }
+    }
+}
+
+// The 'score' of hash function `f` on dataset `c`.
+// The score is higher the fewer collisions `f` produces on `c`.
+fn mapped_cardinality<F>(cases: &[usize], f: F) -> usize
+    where F: Fn(usize) -> usize
 {
-    let mut set = c.into_iter().map(|&s| f(s)).collect_vec();
+    let mut set: Vec<_> = cases.into_iter().map(|&s| f(s)).collect();
     set.sort();
     set.dedup();
     set.len()
 }
 
-fn critical_window(c: &[u64]) -> Window {
-    let mut w = Window {
-        l: K - 1,
-        r: K - 1,
-    };
-    let mut w_max = w;
-
-    for b in (0..K).rev() {
-        w.r = b;
-        if is_critical(w, c) {
-            w_max = w;
-        } else {
-            w.l -= 1;
-            if mapped_cardinality(c, |s| val(s, w)) > mapped_cardinality(c, |s| val(s, w_max)) {
-                w_max = w;
-            }
-        }
+pub fn gen_tree<T: Clone>(cases: &[usize], data: &[T], methods: &[&HashMethod]) -> Tree<T> {
+    if cases.is_empty() {
+        return Tree::Leaf(Marker::Default);
     }
 
-    w_max
+    if cases.len() == 1 {
+        return Tree::Leaf(Marker::Case(cases[0], data[0].clone()));
+    }
+
+    let hash_fn = methods.into_iter()
+        .map(|m| m.new(cases))
+        .max_by_key(|hf| mapped_cardinality(cases, |v| hf.hash(v)))
+        .unwrap_or_else(|| panic!("Must pass at least one hash function"));
+
+    let size = hash_fn.size();
+    let mut children = Vec::with_capacity(size);
+
+    for child_slot in 0..size {
+        let (cases, data): (Vec<_>, Vec<_>) = cases.iter()
+            .cloned()
+            .zip(data.iter().cloned())
+            .filter(|&(case, _)| hash_fn.hash(case) == child_slot)
+            .unzip();
+
+        children.push(gen_tree(&*cases, &*data, methods));
+    }
+
+    Tree::branch(children, hash_fn)
 }
 
 // TODO: look for hash functions with few collisions
@@ -131,115 +162,71 @@ fn critical_window(c: &[u64]) -> Window {
 //
 //
 
-pub fn mrst<'a, I: Into<CaseSet<'a>>>(p: I) -> Tree<'a> {
-    let p = p.into();
-    let (cases, labels) = (p.0, p.1);
-
-    if cases.len() == 1 {
-        return Tree::leaf(Marker::Case(cases[0], labels[0]));
-    }
-
-    let w_max = critical_window(&*cases);
-    let n = 1 + w_max.l - w_max.r;
-    let size = 1 << n;
-    let mut children = Vec::with_capacity(size);
-
-    for j in 0..size {
-        let (cases, labels) = cases.iter()
-                                   .cloned()
-                                   .zip(labels.iter().cloned())
-                                   .filter(|&(i, _)| val(i, w_max) == j as u64)
-                                   .unzip();
-
-        let pj = CaseSet(cases, labels);
-
-        if pj.0.is_empty() {
-            children.push(Tree::leaf(Marker::Default));
-        } else {
-            children.push(mrst(pj));
-        }
-    }
-
-    Tree::new(children, w_max)
-}
-
 #[cfg(test)]
 mod tests {
-    use itertools::*;
+    extern crate itertools;
+    use self::itertools::*;
 
     use std::io::prelude::*;
     use std::fs::File;
+    use std::fmt::Display;
 
-    use super::{Hasher, Marker, Tree, Window, val, mrst};
+    use super::{HashFn, ShiftMask, gen_tree, Window, Tree, Marker};
 
     #[test]
     fn test_val() {
-        assert_eq!(val(41, Window { l: 5, r: 3 }), 5);
+        assert_eq!(Window { l: 5, r: 3 }.hash(41), 5);
     }
 
     #[test]
     fn it_works() {
-        let set = vec![
-            // (2, "f1"),
-            // (4, "f2"),
-            // (8, "f3"),
-            // (16, "f4"),
-            // (32, "f5"),
-            // (64, "f6"),
-            // (128, "f7"),
-            // (256, "f8"),
-            (8, "function 1"),
-            (16, "function 1"),
-            (33, "function 1"),
-            (37, "function 1"),
-            (41, "function 1"),
-            (60, "function 1"),
+        let set = vec![// (2, "f1"),
+                       // (4, "f2"),
+                       // (8, "f3"),
+                       // (16, "f4"),
+                       // (32, "f5"),
+                       // (64, "f6"),
+                       // (128, "f7"),
+                       // (256, "f8"),
+                       (8, "function 1"),
+                       (16, "function 1"),
+                       (33, "function 1"),
+                       (37, "function 1"),
+                       (41, "function 1"),
+                       (60, "function 1"),
 
-            (144, "function 2"),
-            (264, "function 2"),
-            (291, "function 2"),
+                       (144, "function 2"),
+                       (264, "function 2"),
+                       (291, "function 2"),
 
-            (1032, "function 3"),
+                       (1032, "function 3"),
 
-            (2048, "function 4"),
-            (2082, "function 4"),
-        ];
+                       (2048, "function 4"),
+                       (2082, "function 4")];
 
-        let tree = mrst(set);
+        let (cases, data): (Vec<_>, Vec<_>) = set.into_iter().unzip();
+        let tree = gen_tree(&*cases, &*data, &[&ShiftMask]);
 
         let mut f = File::create("test_graph.graphviz").unwrap();
         f.write_all(debug_print_tree(&tree).as_bytes()).unwrap();
     }
 
-    fn debug_print_tree(tree: &Tree) -> String {
-        fn id(tree: &Tree) -> String {
-            match *tree {
-                Tree::Leaf(id, _) => format!("N{}", id),
-                Tree::Node { id, .. } => format!("N{}", id),
-            }
+    fn debug_print_tree<T: Display>(tree: &Tree<T>) -> String {
+        fn id<T>(tree: &Tree<T>) -> String {
+            format!("{}", tree as *const Tree<T> as usize)
         }
 
-        #[allow(unused_variables)]
-        fn helper(tree: &Tree) -> String {
+        fn helper<T: Display>(tree: &Tree<T>) -> String {
             match *tree {
-                Tree::Node { ref children, ref hasher, .. } => {
-                    format!("{} [ label = \"{}\" ]\n{}",
+                Tree::Branch { ref children, ref hash_fn } => {
+                    format!("{} [ label = \"{:?}\" ]\n{}",
                             id(tree),
-                            match *hasher {
-                                Hasher::ShiftMask(w) => {
-                                    //format!("shr {}\nand {}", w.r, 1 + w.l - w.r)
-                                    if w.l == w.r {
-                                        format!("bit {}", w.l)
-                                    } else {
-                                        format!("bits {} to {}", w.l, w.r)
-                                    }
-                                }
-                            },
+                            hash_fn,
                             children.iter()
-                                    .map(|c| format!("{} -> {}\n{}", id(tree), id(c), helper(c)))
-                                    .join("\n"))
+                                .map(|c| format!("{} -> {}\n{}", id(tree), id(c), helper(c)))
+                                .join("\n"))
                 }
-                Tree::Leaf(_, ref m) => {
+                Tree::Leaf(ref m) => {
                     format!("{} [ label = \"{}\" ]",
                             id(tree),
                             match *m {
