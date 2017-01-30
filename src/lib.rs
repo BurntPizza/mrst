@@ -20,11 +20,13 @@ pub trait HashMethod {
     fn new(&self, case_set: &[usize]) -> Box<HashFn>;
 }
 
+#[derive(Debug)]
 pub enum Marker<T> {
     Case(usize, T),
     Default,
 }
 
+#[derive(Debug)]
 pub enum Tree<T> {
     Branch {
         children: Vec<Tree<T>>,
@@ -39,6 +41,29 @@ impl<T> Tree<T> {
             children: children,
             hash_fn: hash_fn,
         }
+    }
+}
+
+pub struct Log2;
+
+impl HashMethod for Log2 {
+    fn new(&self, case_set: &[usize]) -> Box<HashFn> {
+
+        #[derive(Debug, Default)]
+        struct Log2Fn(usize);
+
+        impl HashFn for Log2Fn {
+            fn hash(&self, v: usize) -> usize {
+                v.trailing_zeros() as usize
+            }
+
+            fn size(&self) -> usize {
+                self.0
+            }
+        }
+
+        let max_size = 1 + case_set.into_iter().map(|&v| Log2Fn::default().hash(v)).max().unwrap();
+        Box::new(Log2Fn(max_size))
     }
 }
 
@@ -126,7 +151,7 @@ fn mapped_cardinality<F>(cases: &[usize], f: F) -> usize
     set.len()
 }
 
-pub fn gen_tree<T: Clone>(cases: &[usize], data: &[T], methods: &[&HashMethod]) -> Tree<T> {
+pub fn gen_tree<T: Clone + Debug>(cases: &[usize], data: &[T], methods: &[&HashMethod]) -> Tree<T> {
     if cases.is_empty() {
         return Tree::Leaf(Marker::Default);
     }
@@ -159,8 +184,6 @@ pub fn gen_tree<T: Clone>(cases: &[usize], data: &[T], methods: &[&HashMethod]) 
 // TODO: look for hash functions with few collisions
 // use additional node types for this: e.g. "Node" -> "ShiftMask" or something
 // and then "SubLow", "Log2", and "JumpTable"
-//
-//
 
 #[cfg(test)]
 mod tests {
@@ -171,7 +194,7 @@ mod tests {
     use std::fs::File;
     use std::fmt::Display;
 
-    use super::{HashFn, ShiftMask, gen_tree, Window, Tree, Marker};
+    use super::{HashFn, ShiftMask, Log2, gen_tree, Window, Tree, Marker};
 
     #[test]
     fn test_val() {
@@ -180,14 +203,15 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let set = vec![// (2, "f1"),
+        let set = vec![// (1, "f0"),
+                       // (2, "f1"),
                        // (4, "f2"),
                        // (8, "f3"),
                        // (16, "f4"),
                        // (32, "f5"),
                        // (64, "f6"),
                        // (128, "f7"),
-                       // (256, "f8"),
+                       // (256, "f8")
                        (8, "function 1"),
                        (16, "function 1"),
                        (33, "function 1"),
@@ -205,7 +229,7 @@ mod tests {
                        (2082, "function 4")];
 
         let (cases, data): (Vec<_>, Vec<_>) = set.into_iter().unzip();
-        let tree = gen_tree(&*cases, &*data, &[&ShiftMask]);
+        let tree = gen_tree(&*cases, &*data, &[&ShiftMask, &Log2]);
 
         let mut f = File::create("test_graph.graphviz").unwrap();
         f.write_all(debug_print_tree(&tree).as_bytes()).unwrap();
