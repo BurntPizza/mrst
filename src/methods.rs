@@ -10,7 +10,50 @@ const K: u8 = 64;
 #[cfg(target_pointer_width = "32")]
 const K: u8 = 32;
 
+pub struct SubLow;
 
+struct SubLowFn {
+    bias: usize,
+    max: usize,
+}
+
+impl HashFn for SubLowFn {
+    fn hash(&self, v: usize) -> usize {
+        v - self.bias
+    }
+
+    fn max(&self) -> usize {
+        self.max
+    }
+}
+
+impl Debug for SubLowFn {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "x - {}", self.bias)
+    }
+}
+
+impl HashMethod for SubLow {
+    fn new(&self, cases: &[usize]) -> Box<HashFn> {
+        assert!(!cases.is_empty());
+        let bias = cases.iter().cloned().min().unwrap();
+        let max = cases.into_iter()
+            .map(|&v| {
+                SubLowFn {
+                        bias: bias,
+                        max: 0,
+                    }
+                    .hash(v)
+            })
+            .max()
+            .unwrap() + 1;
+
+        Box::new(SubLowFn {
+            bias: bias,
+            max: max,
+        })
+    }
+}
 
 pub struct ClzSub;
 
@@ -36,11 +79,11 @@ impl Debug for ClzSubFn {
 }
 
 impl HashMethod for ClzSub {
-    fn new(&self, case_set: &[usize]) -> Box<HashFn> {
-        assert!(!case_set.is_empty());
+    fn new(&self, case: &[usize]) -> Box<HashFn> {
+        assert!(!case.is_empty());
         let bias =
-            case_set.iter().cloned().map(|v| ClzSubFn { bias: 0, max: 0 }.hash(v)).min().unwrap();
-        let max = case_set.into_iter()
+            case.iter().cloned().map(|v| ClzSubFn { bias: 0, max: 0 }.hash(v)).min().unwrap();
+        let max = case.into_iter()
             .map(|&v| {
                 ClzSubFn {
                         bias: bias,

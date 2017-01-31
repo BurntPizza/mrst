@@ -65,6 +65,11 @@ impl<T: Clone> Tree<T> {
         for m in methods {
             let f = m.new(cases);
             let max = f.max();
+
+            if max > cases.len() {
+                continue;
+            }
+
             let children: Vec<_> = (0..max)
                 .into_iter()
                 .map(|slot| {
@@ -109,12 +114,6 @@ impl<T: Clone> Tree<T> {
         }
     }
 }
-
-
-
-// TODO: look for hash functions with few collisions
-// use additional node types for this: e.g. "Node" -> "ShiftMask" or something
-// and then "SubLow", "Log2", and "JumpTable"
 
 #[cfg(test)]
 mod tests {
@@ -163,14 +162,9 @@ mod tests {
                        (2082, "function 4")];
 
         let (cases, data): (Vec<_>, Vec<_>) = set.into_iter().unzip();
-        use super::HashMethod;
-        let f = ClzSub.new(&*cases);
-        println!("8: {}", f.hash(8));
-        println!("264: {}", f.hash(264));
-
-        let tree = Tree::new(&*cases, &*data, &[&ShiftMask, &ClzSub]);
-
+        let tree = Tree::new(&*cases, &*data, &[&SubLow, &ClzSub, &ShiftMask]);
         let mut f = File::create("test_graph.graphviz").unwrap();
+
         f.write_all(debug_print_tree(&tree).as_bytes()).unwrap();
     }
 
