@@ -3,5 +3,5 @@ name = "mrst"
 version = "0.1.0"
 authors = ["BurntPizza <xburntpizza@gmail.com>"]
 
-[dependencies]
+[dev-dependencies]
 itertools = "0.4"
