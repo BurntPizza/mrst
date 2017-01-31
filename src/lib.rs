@@ -35,38 +35,133 @@ pub enum Tree<T> {
     Leaf(Marker<T>),
 }
 
-impl<T> Tree<T> {
+impl<T: Clone> Tree<T> {
+    fn new(cases: &[usize], data: &[T], methods: &[&HashMethod]) -> Self {
+        assert!(!methods.is_empty());
+        assert_eq!(cases.len(),
+                   {
+                       let mut sorted = cases.to_vec();
+                       sorted.sort();
+                       sorted.dedup();
+                       sorted.len()
+                   },
+                   "Duplicate cases");
+
+        Tree::new_helper(0, cases.len(), cases, data, methods).unwrap()
+    }
+
+    fn new_helper(depth: usize,
+                  max_depth: usize,
+                  cases: &[usize],
+                  data: &[T],
+                  methods: &[&HashMethod])
+                  -> Option<Self> {
+        if depth > max_depth {
+            return None;
+        }
+
+        if cases.is_empty() {
+            return Some(Tree::Leaf(Marker::Default));
+        }
+
+        if cases.len() == 1 {
+            return Some(Tree::Leaf(Marker::Case(cases[0], data[0].clone())));
+        }
+
+        let mut best: Option<Tree<T>> = None;
+
+        for m in methods {
+            let f = m.new(cases);
+            let size = f.size();
+            let children: Vec<_> = (0..size)
+                .into_iter()
+                .map(|slot| {
+                    let (cases, data): (Vec<_>, Vec<_>) = cases.iter()
+                        .cloned()
+                        .zip(data.iter().cloned())
+                        .filter(|&(case, _)| f.hash(case) == slot)
+                        .unzip();
+
+                    Tree::new_helper(depth + 1, max_depth, &*cases, &*data, methods)
+                })
+                .collect();
+
+            if children.iter().any(Option::is_none) {
+                continue;
+            }
+
+            let children = children.into_iter().map(Option::unwrap).collect();
+            let tree = Tree::branch(children, f);
+
+            if best.is_none() || best.as_ref().map(Tree::depth).unwrap() > tree.depth() {
+                best = Some(tree);
+            }
+        }
+
+        best
+    }
+
     fn branch(children: Vec<Tree<T>>, hash_fn: Box<HashFn>) -> Self {
         Tree::Branch {
             children: children,
             hash_fn: hash_fn,
         }
     }
-}
 
-pub struct Log2;
-
-impl HashMethod for Log2 {
-    fn new(&self, case_set: &[usize]) -> Box<HashFn> {
-
-        #[derive(Debug, Default)]
-        struct Log2Fn(usize);
-
-        impl HashFn for Log2Fn {
-            fn hash(&self, v: usize) -> usize {
-                v.trailing_zeros() as usize
-            }
-
-            fn size(&self) -> usize {
-                self.0
+    fn depth(&self) -> usize {
+        match *self {
+            Tree::Leaf(..) => 1,
+            Tree::Branch { ref children, .. } => {
+                1 + children.into_iter().map(Tree::depth).max().unwrap()
             }
         }
-
-        let max_size = 1 + case_set.into_iter().map(|&v| Log2Fn::default().hash(v)).max().unwrap();
-        Box::new(Log2Fn(max_size))
     }
 }
 
+pub struct ClzSub;
+
+struct ClzSubFn {
+    bias: usize,
+    size: usize,
+}
+
+impl HashFn for ClzSubFn {
+    fn hash(&self, v: usize) -> usize {
+        (v.leading_zeros() as usize) - self.bias
+    }
+
+    fn size(&self) -> usize {
+        self.size
+    }
+}
+
+impl Debug for ClzSubFn {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "clz(x) - {}", self.bias)
+    }
+}
+
+impl HashMethod for ClzSub {
+    fn new(&self, case_set: &[usize]) -> Box<HashFn> {
+        assert!(!case_set.is_empty());
+        let bias =
+            case_set.iter().cloned().map(|v| ClzSubFn { bias: 0, size: 0 }.hash(v)).min().unwrap();
+        let max_size = case_set.into_iter()
+            .map(|&v| {
+                ClzSubFn {
+                        bias: bias,
+                        size: 0,
+                    }
+                    .hash(v)
+            })
+            .max()
+            .unwrap() + 1;
+        Box::new(ClzSubFn {
+            bias: bias,
+            size: max_size,
+        })
+    }
+}
 
 /// From "Efficient Multiway Radix Search Trees"
 /// https://drhanson.s3.amazonaws.com/storage/documents/mrst.pdf
@@ -99,7 +194,6 @@ impl Window {
             r: K - 1,
         };
         let mut w_max = w;
-
         for b in (0..K).rev() {
             w.r = b;
             if w.is_critical(cases) {
@@ -151,36 +245,6 @@ fn mapped_cardinality<F>(cases: &[usize], f: F) -> usize
     set.len()
 }
 
-pub fn gen_tree<T: Clone + Debug>(cases: &[usize], data: &[T], methods: &[&HashMethod]) -> Tree<T> {
-    if cases.is_empty() {
-        return Tree::Leaf(Marker::Default);
-    }
-
-    if cases.len() == 1 {
-        return Tree::Leaf(Marker::Case(cases[0], data[0].clone()));
-    }
-
-    let hash_fn = methods.into_iter()
-        .map(|m| m.new(cases))
-        .max_by_key(|hf| mapped_cardinality(cases, |v| hf.hash(v)))
-        .unwrap_or_else(|| panic!("Must pass at least one hash function"));
-
-    let size = hash_fn.size();
-    let mut children = Vec::with_capacity(size);
-
-    for child_slot in 0..size {
-        let (cases, data): (Vec<_>, Vec<_>) = cases.iter()
-            .cloned()
-            .zip(data.iter().cloned())
-            .filter(|&(case, _)| hash_fn.hash(case) == child_slot)
-            .unzip();
-
-        children.push(gen_tree(&*cases, &*data, methods));
-    }
-
-    Tree::branch(children, hash_fn)
-}
-
 // TODO: look for hash functions with few collisions
 // use additional node types for this: e.g. "Node" -> "ShiftMask" or something
 // and then "SubLow", "Log2", and "JumpTable"
@@ -194,7 +258,7 @@ mod tests {
     use std::fs::File;
     use std::fmt::Display;
 
-    use super::{HashFn, ShiftMask, Log2, gen_tree, Window, Tree, Marker};
+    use super::{HashFn, ShiftMask, ClzSub, Window, Tree, Marker};
 
     #[test]
     fn test_val() {
@@ -203,7 +267,8 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let set = vec![// (1, "f0"),
+        let set = vec![// (0, "F"),
+                       // (1, "f0"),
                        // (2, "f1"),
                        // (4, "f2"),
                        // (8, "f3"),
@@ -211,7 +276,7 @@ mod tests {
                        // (32, "f5"),
                        // (64, "f6"),
                        // (128, "f7"),
-                       // (256, "f8")
+                       // (256, "f8"),
                        (8, "function 1"),
                        (16, "function 1"),
                        (33, "function 1"),
@@ -229,7 +294,12 @@ mod tests {
                        (2082, "function 4")];
 
         let (cases, data): (Vec<_>, Vec<_>) = set.into_iter().unzip();
-        let tree = gen_tree(&*cases, &*data, &[&ShiftMask, &Log2]);
+        use super::HashMethod;
+        let f = ClzSub.new(&*cases);
+        println!("8: {}", f.hash(8));
+        println!("264: {}", f.hash(264));
+
+        let tree = Tree::new(&*cases, &*data, &[&ShiftMask, &ClzSub]);
 
         let mut f = File::create("test_graph.graphviz").unwrap();
         f.write_all(debug_print_tree(&tree).as_bytes()).unwrap();
